@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# 环境变量与密钥（绝不提交）
+.env
+.env.local
+*.enc
+
+# IDE
+.idea/
+.vscode/
+
+# 数据与模型（体积大，不入库）
+models/
+data/
+logs/
+*.log
+
+# 系统
+Thumbs.db
+.DS_Store
+
+# 临时
+pip_install.log

@@ -1,0 +1,66 @@
+# =============================================================================
+# 医典 RAG 多维知识库系统 - Python 依赖
+# 说明：不锁版本，由 pip 自动解析兼容组合（原锁定版本见 requirements_pinned.txt）
+# =============================================================================
+
+# Web 框架
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+
+# LLM / RAG 框架
+langchain
+langchain-community
+langchain-text-splitters
+llama-index
+llama-index-core
+
+# OpenAI 兼容接口
+openai
+
+# 向量数据库
+pymilvus
+
+# 图数据库
+neo4j
+
+# 关系数据库
+sqlalchemy[asyncio]
+asyncpg
+psycopg2-binary
+
+# Embedding 模型
+sentence-transformers
+FlagEmbedding
+numpy
+
+# HTTP 客户端
+httpx
+aiohttp
+
+# 评估体系
+trulens-core
+trulens-providers-openai
+
+# 可观测性
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-sqlalchemy
+opentelemetry-instrumentation-httpx
+
+# Redis（可选）
+redis
+
+# 工具库
+python-dotenv
+tenacity
+tqdm
+
+# 测试
+pytest
+pytest-asyncio
+pytest-httpx
