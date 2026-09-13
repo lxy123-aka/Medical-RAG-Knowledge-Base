@@ -290,22 +290,33 @@ class SQLRAGChannel:
             if "FROM" in sql_upper and "PERMISSION_LEVEL" not in sql_upper:
                 # 找到 FROM 后的表名
                 from_idx = sql_upper.index("FROM") + 4
-                rest = sql[from_idx:].strip()
+                rest = sql[from_idx:]
+                stripped = rest.lstrip()
+                leading = len(rest) - len(stripped)  # 保留表名前的原始空格
 
                 # 找到表名结束位置（空格、逗号、换行等）
                 end_idx = 0
-                for i, ch in enumerate(rest):
+                for i, ch in enumerate(stripped):
                     if ch in (' ', '\n', '\t', ','):
                         end_idx = i
                         break
 
                 if end_idx > 0:
-                    table_name = rest[:end_idx]
+                    table_name = stripped[:end_idx]
                     sql = (
                         sql[:from_idx]
-                        + rest[:end_idx]
+                        + " " * max(leading, 1)  # 至少保留一个空格，避免 FROMdocuments
+                        + table_name
                         + f" WHERE permission_level <= {permission_level}"
-                        + rest[end_idx:]
+                        + stripped[end_idx:]
+                    )
+                else:
+                    # 表名是 SQL 最后一个 token（无后续空格/逗号）
+                    sql = (
+                        sql[:from_idx]
+                        + " " * max(leading, 1)
+                        + stripped
+                        + f" WHERE permission_level <= {permission_level}"
                     )
 
         return sql

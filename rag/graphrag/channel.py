@@ -157,6 +157,32 @@ class GraphRAGChannel:
                     error_messages.append(error_msg)
                     continue
 
+                # 2.1 校验 Cypher 完整性（规则15: 防止 LLM 输出残缺/空查询）
+                cypher_first = cypher.lstrip().upper()
+                if not any(
+                    cypher_first.startswith(kw)
+                    for kw in ("MATCH", "CREATE", "MERGE", "WITH", "UNWIND", "CALL")
+                ):
+                    error_msg = (
+                        f"Cypher 不完整（必须以 MATCH/CREATE/MERGE 开头，"
+                        f"实际: {cypher_first[:60]}），请输出完整查询语句"
+                    )
+                    logger.warning(f"[NL2Cypher] {error_msg} | 尝试 {attempt + 1}")
+                    error_feedback = error_msg
+                    error_messages.append(error_msg)
+                    continue
+
+                # 2.2 拒绝空查询占位（MATCH () RETURN 1 LIMIT 0 等）
+                if "MATCH () RETURN 1" in cypher.upper():
+                    error_msg = (
+                        "Cypher 是空查询占位（MATCH () RETURN 1 LIMIT 0），"
+                        "请根据用户问题生成有实际语义的查询"
+                    )
+                    logger.warning(f"[NL2Cypher] {error_msg} | 尝试 {attempt + 1}")
+                    error_feedback = error_msg
+                    error_messages.append(error_msg)
+                    continue
+
                 logger.info(f"[NL2Cypher] 生成 Cypher (尝试 {attempt + 1}): {cypher[:100]}")
 
                 # 3. 执行 Cypher

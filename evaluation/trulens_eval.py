@@ -33,7 +33,7 @@ class TruLensEvaluator:
         self._feedback_functions = {}
 
     async def initialize(self) -> None:
-        """初始化 TruLens"""
+        """初始化 TruLens（只读配置；TruLens 库延迟到首次评估时才加载，避免拖慢启动）"""
         settings = get_settings()
         self._enabled = settings.trulens_enabled
         self._sample_rate = settings.trulens_sample_rate
@@ -42,11 +42,18 @@ class TruLensEvaluator:
             logger.info("[TruLens] 评估已禁用")
             return
 
+        logger.info(f"[TruLens] 评估已启用（懒加载），采样率: {self._sample_rate}")
+
+    def _ensure_feedback_functions(self) -> None:
+        """懒加载 TruLens 反馈函数（首次评估时调用，import 较慢约 30s）"""
+        if self._feedback_functions or not self._enabled:
+            return
         try:
-            # 初始化 TruLens 反馈函数
+            # 仅在首次评估时加载 TruLens（import 耗时长，不阻塞服务启动）
             from trulens.core import Feedback
             from trulens.providers.openai import OpenAI as TruOpenAI
 
+            settings = get_settings()
             provider = TruOpenAI(
                 model_engine=settings.llm_model_name,
             )
@@ -66,10 +73,9 @@ class TruLensEvaluator:
                 ),
             }
 
-            logger.info(f"[TruLens] 初始化成功，采样率: {self._sample_rate}")
-
+            logger.info(f"[TruLens] 反馈函数懒加载完成")
         except Exception as e:
-            logger.warning(f"[TruLens] 初始化失败，评估功能降级: {e}")
+            logger.warning(f"[TruLens] 反馈函数加载失败，评估功能降级: {e}")
             self._enabled = False
 
     def should_sample(self) -> bool:
@@ -99,6 +105,11 @@ class TruLensEvaluator:
         """
         if not self._enabled or not self.should_sample():
             return {"sampled": False}
+
+        # 懒加载反馈函数（首次评估时 import TruLens）
+        self._ensure_feedback_functions()
+        if not self._feedback_functions:
+            return {"sampled": False, "error": "TruLens 反馈函数不可用"}
 
         start_time = time.time()
         results = {

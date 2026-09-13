@@ -284,6 +284,10 @@ class LLMService:
 {schema_summary}
 {error_section}
 
+示例查询:
+用户问题: 高血压有什么常见症状
+Cypher: MATCH (d:Disease {{name: '高血压'}})-[:HAS_SYMPTOM]->(s:Symptom) RETURN s.name AS name, s.description AS description LIMIT 20
+
 用户问题: {query}
 
 要求:
@@ -292,6 +296,7 @@ class LLMService:
 3. 关系类型必须使用上述 Schema 中定义的类型
 4. 查询结果要有意义（使用 RETURN 返回关键信息）
 5. 使用 MATCH 模式匹配，避免笛卡尔积
+6. **必须输出完整的 MATCH 语句开头**（禁止只输出 RETURN 片段、禁止输出 MATCH () RETURN 1 LIMIT 0 这类空查询）
 
 Cypher:"""
 

@@ -121,8 +121,30 @@ class MilvusPool:
                     index_params=idx_params,
                 )
                 logger.info(f"Milvus 创建索引: {name}.embedding")
+                # 加载集合到内存，否则搜索会报 collection not loaded
+                self._client.load_collection(collection_name=name)
+                logger.info(f"Milvus 集合已加载: {name}")
             else:
-                logger.info(f"Milvus 集合已存在: {name}")
+                # 已存在的集合：检查索引（无索引无法 load），缺失则补齐，再加载
+                try:
+                    indexes = self._client.list_indexes(collection_name=name)
+                    if not indexes:
+                        idx_params = self._client.prepare_index_params()
+                        idx_params.add_index(
+                            field_name="embedding",
+                            index_type=INDEX_PARAMS["index_type"],
+                            metric_type=INDEX_PARAMS["metric_type"],
+                            params=INDEX_PARAMS["params"],
+                        )
+                        self._client.create_index(
+                            collection_name=name,
+                            index_params=idx_params,
+                        )
+                        logger.info(f"Milvus 补齐索引: {name}.embedding")
+                    self._client.load_collection(collection_name=name)
+                    logger.info(f"Milvus 集合已加载(已有): {name}")
+                except Exception as e:
+                    logger.warning(f"Milvus 集合处理失败(已有): {name}: {e}")
 
     async def search(
         self,

@@ -6,11 +6,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import List, Optional
 
 import numpy as np
 
 from config.settings import get_settings
+
+# 本地模型离线加载，禁止联网检查/下载（避免启动卡顿）
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +45,16 @@ class EmbeddingModel:
 
             settings = get_settings()
 
-            # 1. 尝试加载本地模型
+            # 1. 尝试加载本地模型（sentence-transformers 直接加载，稳定且离线）
             try:
-                from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+                from sentence_transformers import SentenceTransformer
 
-                self._model = HuggingFaceBgeEmbeddings(
-                    model_name=settings.embedding_model_path,
-                    model_kwargs={"device": "cpu"},
-                    encode_kwargs={"normalize_embeddings": True},
+                self._model = SentenceTransformer(
+                    settings.embedding_model_path,
+                    device="cpu",
                 )
                 # 测试一下是否可用
-                test_vec = self._model.embed_query("测试")
+                test_vec = self._model.encode("测试", normalize_embeddings=True).tolist()
                 assert len(test_vec) == self._dimension, (
                     f"本地模型输出维度 {len(test_vec)} != 期望 {self._dimension}"
                 )
@@ -113,7 +117,7 @@ class EmbeddingModel:
 
         if self._mode == "local":
             try:
-                vec = self._model.embed_query(text)
+                vec = self._model.encode(text, normalize_embeddings=True).tolist()
                 return vec
             except Exception as e:
                 logger.error(f"[Embedding] 本地模型编码失败: {e}")
@@ -149,7 +153,7 @@ class EmbeddingModel:
 
         if self._mode == "local":
             try:
-                vecs = self._model.embed_documents(texts)
+                vecs = self._model.encode(texts, normalize_embeddings=True).tolist()
                 return vecs
             except Exception as e:
                 logger.error(f"[Embedding] 本地模型批量编码失败: {e}")
