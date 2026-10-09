@@ -1,331 +1,215 @@
-# 医典 RAG 多维知识库系统
+# 医疗RAG知识库 - 混合检索智能问答系统
 
-> 为 AI 智能体打通三通道工程化检索方案：DocRAG（向量检索）、GraphRAG（知识图谱）、SQLRAG（关系数据库）
+> 向量检索 + 医学知识图谱检索，用于医学指南、医典文档问答，重点抑制医疗幻觉，回答附带原文溯源。
 
-## 项目介绍
+## 项目概述
 
-医典 RAG 多维知识库系统是从智慧问诊系统下沉的基础设施组件，提供完整的 RAG（Retrieval-Augmented Generation）检索增强生成能力。系统支持医学教材、病历、药典文档的批量入库，通过三通道并行检索和智能融合，为上层 AI 智能体提供高质量的医学知识检索服务。
+本项目是一个基于 **LangGraph 多Agent编排** 的医疗智能问答系统，采用 **Milvus 向量检索 + Neo4j 知识图谱** 双通道混合检索架构。
 
 ### 核心特性
 
-- **三通道并行检索**：DocRAG（Milvus 向量库）、GraphRAG（Neo4j 知识图谱）、SQLRAG（PostgreSQL 关系数据库）
-- **动态 HyDE + Rewrite**：假设文档增强检索 + 查询重写（口语→医学术语标准化 + 子查询拆分 + 意图识别路由）
-- **NL2Cypher 错误反馈重试**：图谱查询失败后自动修正重生成，目标成功率 ~90%
-- **TruLens + OpenTelemetry 评估体系**：RAG 三元指标（Context Relevance、Groundedness、Answer Relevance）按通道分别评估
-- **权限过滤**：基于数据 meta 字段实现权限过滤切片
-- **配置驱动**：通道开关、阈值、采样率全部走配置，不硬编码
+- **混合检索**：Milvus 向量语义召回 + Neo4j 图谱关联查询
+- **幻觉抑制**：独立事实校验Agent，识别矛盾医学信息
+- **原文溯源**：回答强制附带文档来源引用
+- **免责声明**：所有回答强制标注【仅供学习参考，不能替代执业医师诊断】
+- **语义分块**：医疗文档按章节/段落语义切分，非固定长度粗暴切分
+- **LangGraph Agent**：问题改写 → 实体抽取 → 并行检索 → 答案生成 → 事实校验
 
-## 架构概览
+## 目录结构
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        FastAPI 应用层                            │
-│  /api/v1/query/search  /api/v1/documents  /api/v1/health       │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────────┐
-│                       融合引擎 (FusionEngine)                    │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                      │
-│  │ Query    │  │ asyncio  │  │ 结果融合  │                      │
-│  │ Rewrite  │→ │ .gather  │→ │ + 降级   │→ LLM 生成答案         │
-│  │ + HyDE   │  │ 并行检索  │  │          │                      │
-│  └──────────┘  └──────────┘  └──────────┘                      │
-└───────┬─────────────┬─────────────┬─────────────────────────────┘
-        │             │             │
-┌───────▼──────┐ ┌────▼───────┐ ┌──▼──────────┐
-│   DocRAG     │ │  GraphRAG  │ │   SQLRAG    │
-│              │ │            │ │             │
-│ Milvus 向量  │ │ Neo4j 图谱 │ │ PostgreSQL  │
-│ + HyDE       │ │ + NL2Cypher│ │ + NL2SQL    │
-│ + Reranker   │ │ + 重试机制  │ │             │
-└──────────────┘ └────────────┘ └─────────────┘
-        │             │             │
-┌───────▼─────────────▼─────────────▼─────────────────────────────┐
-│                     评估体系 (TruLens + OTEL)                     │
-│  Context Relevance | Groundedness | Answer Relevance             │
-└─────────────────────────────────────────────────────────────────┘
+E:\Medical-RAG-Knowledge-Base
+├── data/
+│   ├── raw/              # 原始医学文档 (pdf/md/txt)
+│   └── processed/        # 清洗分段后的文本
+├── config/               # 配置文件 (Pydantic Settings)
+│   └── settings.py       # 全局配置，.env 只读一次
+├── src/
+│   ├── document_parser/  # PDF解析、表格抽取、医疗语义分块
+│   │   ├── parser.py     # 文档解析器 (PDF/MD/TXT)
+│   │   └── chunker.py    # 医疗语义分块器
+│   ├── entity_extract/   # 医学实体抽取、关系抽取
+│   │   └── extractor.py  # LLM驱动的实体/关系抽取
+│   ├── vector_store/     # Milvus向量入库、检索
+│   │   └── store.py      # 向量存储封装
+│   ├── graph_store/      # Neo4j图谱构建、Cypher查询
+│   │   └── store.py      # 图谱存储封装
+│   ├── agent/            # LangGraph多Agent编排
+│   │   ├── state.py      # Agent状态定义
+│   │   ├── nodes.py      # Agent节点(改写/抽取/检索/生成/校验)
+│   │   └── graph.py      # LangGraph图构建与执行
+│   └── rag_pipeline.py   # 项目主入口文件
+├── core/                 # 核心基础设施
+│   ├── embedding.py      # Embedding模型 (本地优先/API降级)
+│   ├── milvus_schema.py  # Milvus Schema定义
+│   ├── neo4j_schema.py   # Neo4j Schema定义
+│   └── safe_json.py      # JSON安全解析工具
+├── services/             # 服务层
+│   ├── db/               # 数据库连接池
+│   │   ├── milvus_pool.py
+│   │   ├── neo4j_pool.py
+│   │   └── postgres_pool.py
+│   └── llm/              # LLM服务 (Qwen)
+│       └── llm_service.py
+├── tests/                # 测试模块
+│   ├── test_document_parser.py  # 文档解析/分块测试
+│   ├── test_retrieval.py        # 召回测试
+│   └── test_hallucination.py    # 幻觉对抗测试
+├── .env                  # 环境变量配置
+├── docker-compose.yml    # Milvus + Neo4j 容器编排
+├── requirements.txt      # Python依赖
+└── main.py               # FastAPI服务入口
 ```
 
 ## 技术栈
 
-| 组件 | 技术 | 用途 |
-|------|------|------|
-| Web 框架 | FastAPI | API 服务 |
-| RAG 框架 | LangChain + LlamaIndex | 文档处理、分片 |
-| 文档解析 | MinerU | PDF 高精度还原为 Markdown |
-| 向量数据库 | Milvus | DocRAG 向量检索 |
-| 图数据库 | Neo4j | GraphRAG 知识图谱 |
-| 关系数据库 | PostgreSQL | SQLRAG 关系数据 |
-| Embedding | bge-large-zh-v1.5 | 文本向量化（本地优先） |
-| LLM | Qwen 系列 | 生成、重写、NL2Cypher |
-| 评估 | TruLens | RAG 三元指标评估 |
-| 可观测性 | OpenTelemetry | 分布式追踪 |
-| 容器编排 | Docker Compose | 一键部署 |
-
-## 项目目录结构
-
-```
-Medical-RAG-Knowledge-Base/
-├── main.py                          # FastAPI 启动入口
-├── .env.example                     # 环境变量示例
-├── requirements.txt                 # Python 依赖
-├── docker-compose.yml               # 容器编排
-│
-├── config/                          # 配置层
-│   ├── settings.py                  # Pydantic Settings（启动时一次性校验）
-│   └── constants.py                 # 全局常量
-│
-├── core/                            # 核心工具层
-│   ├── neo4j_schema.py             # Neo4j Schema 共享常量（规则1）
-│   ├── milvus_schema.py            # Milvus Schema 集中管理（规则3）
-│   ├── safe_json.py                # safe_json_parse 工具（规则6）
-│   └── embedding.py                # Embedding 加载（本地优先，规则10）
-│
-├── models/                          # 数据模型
-│   └── schemas.py                  # Pydantic 请求/响应模型
-│
-├── services/                        # 服务层
-│   ├── db/
-│   │   ├── neo4j_pool.py           # Neo4j 连接池（规则2/4）
-│   │   ├── milvus_pool.py          # Milvus 连接池（规则3/4）
-│   │   └── postgres_pool.py        # PostgreSQL 连接池（规则4）
-│   └── llm/
-│       └── llm_service.py          # LLM 统一封装
-│
-├── rag/                             # RAG 三通道
-│   ├── docrag/
-│   │   └── channel.py              # DocRAG 向量检索通道
-│   ├── graphrag/
-│   │   └── channel.py              # GraphRAG 知识图谱通道
-│   └── sqlrag/
-│       └── channel.py              # SQLRAG 关系数据库通道
-│
-├── fusion/                          # 融合层
-│   └── fusion_engine.py            # 并行检索 + 降级 + 融合
-│
-├── document/                        # 文档处理
-│   └── mineru_parser.py            # MinerU 解析 + 分片 + 入库
-│
-├── evaluation/                      # 评估体系
-│   └── trulens_eval.py             # TruLens RAG 三元评估
-│
-├── observability/                   # 可观测性
-│   └── otel_tracing.py             # OpenTelemetry 追踪
-│
-├── api/                             # API 路由
-│   └── routes/
-│       ├── query.py                # 检索查询接口
-│       ├── documents.py            # 文档管理接口
-│       ├── health.py               # 健康检查接口
-│       └── evaluation.py           # 评估接口
-│
-├── scripts/                         # 初始化脚本
-│   ├── init_neo4j.py               # Neo4j 图谱初始化
-│   ├── init_milvus.py              # Milvus 向量库初始化
-│   ├── init_postgres.sql           # PostgreSQL 建表 SQL
-│   └── verify.py                   # 验证清单脚本（规则17）
-│
-├── tests/                           # 测试用例
-│   └── test_integration.py         # 集成测试
-│
-└── data/                            # 数据目录
-    ├── neo4j/
-    ├── milvus/
-    └── postgres/
-```
+| 组件 | 技术选型 |
+|------|----------|
+| 大模型 | Qwen (OpenAI兼容接口) |
+| Agent编排 | LangGraph |
+| 向量数据库 | Milvus 2.4 |
+| 图数据库 | Neo4j 5.15 |
+| Embedding | bge-large-zh-v1.5 (本地优先) |
+| 文档解析 | PyMuPDF |
+| Web框架 | FastAPI |
+| 容器化 | Docker Compose |
 
 ## 快速开始
 
-### 环境要求
+### 1. 环境准备
 
-- Python 3.10+
-- Docker & Docker Compose
-- Node.js（可选，用于前端）
-
-### 1. 克隆项目并配置环境
-
-```powershell
-# Windows PowerShell
-cd E:\Medical-RAG-Knowledge-Base
-
-# 创建虚拟环境
-python -m venv venv
-.\venv\Scripts\Activate
-
-# 安装依赖
+```bash
+# 安装 Python 依赖
 pip install -r requirements.txt
 
-# 复制环境变量配置
-Copy-Item .env.example .env
-# 编辑 .env 文件，填入实际的 API Key 和密码
+# 配置环境变量
+# 编辑 .env 文件，填写 LLM_API_KEY、NEO4J_PASSWORD、MILVUS_PASSWORD 等
 ```
 
-### 2. 启动基础设施（Docker）
+### 2. 启动基础设施
 
-```powershell
-# 启动所有数据库服务
+```bash
+# Docker 一键启动 Milvus + Neo4j
 docker-compose up -d
 
-# 等待服务就绪（约 2-3 分钟）
+# 等待服务就绪 (约 2-3 分钟)
 docker-compose ps
-
-# 查看日志
-docker-compose logs -f
 ```
 
-### 3. 初始化数据库
+### 3. 文档入库
 
-```powershell
-# 初始化 Neo4j 知识图谱
-python scripts/init_neo4j.py
+```bash
+# 入库单个文档
+python -m src.rag_pipeline ingest --file data/raw/高血压指南.pdf
 
-# 初始化 Milvus 向量库
-python scripts/init_milvus.py
+# 批量入库整个目录
+python -m src.rag_pipeline ingest --dir data/raw/ --source-type textbook
 
-# PostgreSQL 会自动通过 docker-compose 初始化
+# 跳过实体抽取（仅向量入库）
+python -m src.rag_pipeline ingest --file data/raw/文档.pdf --no-entity
 ```
 
-### 4. 启动应用
+### 4. 问答
 
-```powershell
-# 开发模式（热重载）
-python main.py
+```bash
+# 单次问答
+python -m src.rag_pipeline ask "高血压有哪些常见症状？"
 
-# 或使用 uvicorn
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# 交互式问答
+python -m src.rag_pipeline interactive
+
+# 查看系统状态
+python -m src.rag_pipeline status
 ```
 
-### 5. 访问 API 文档
+### 5. 运行测试
 
-打开浏览器访问：http://localhost:8000/docs
+```bash
+# 运行文档解析测试
+pytest tests/test_document_parser.py -v
 
-## API 接口
+# 运行幻觉对抗测试
+pytest tests/test_hallucination.py -v
 
-### 多通道检索
-
-```http
-POST /api/v1/query/search
-Content-Type: application/json
-
-{
-    "query": "高血压的常见症状和治疗方法",
-    "channels": ["docrag", "graphrag", "sqlrag"],
-    "top_k": 5,
-    "permission_level": 0,
-    "enable_hyde": true,
-    "enable_rewrite": true,
-    "enable_reranker": true
-}
+# 运行全部测试
+pytest tests/ -v
 ```
 
-### 单通道检索
+## LangGraph Agent 工作流
 
-```http
-POST /api/v1/query/search/single?channel=docrag
-Content-Type: application/json
-
-{
-    "query": "高血压的症状",
-    "top_k": 5
-}
+```
+用户提问
+  │
+  ▼
+┌─────────────────┐
+│ 问题改写 Agent   │  口语→术语标准化 + 子查询拆分
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│ 实体抽取 Agent   │  提取疾病/症状/药物/检查
+└────────┬────────┘
+         │
+┌────────▼────────────────────┐
+│        并行检索              │
+│  ┌──────────┐ ┌──────────┐  │
+│  │Milvus    │ │Neo4j     │  │
+│  │向量召回   │ │图谱关联   │  │
+│  └────┬─────┘ └────┬─────┘  │
+└───────┼────────────┼────────┘
+        │            │
+┌───────▼────────────▼────────┐
+│       上下文拼接             │
+└───────────┬─────────────────┘
+            │
+┌───────────▼─────────────────┐
+│    LLM 答案生成             │  基于参考资料 + 来源标注
+└───────────┬─────────────────┘
+            │
+┌───────────▼─────────────────┐
+│    事实校验 Agent            │  矛盾/幻觉/错误用药检测
+└───────────┬─────────────────┘
+            │
+┌───────────▼─────────────────┐
+│  输出答案 + 引用来源         │
+│  + 免责声明                 │
+└─────────────────────────────┘
 ```
 
-### 文档上传
+## 分块策略说明
 
-```http
-POST /api/v1/documents/upload
-Content-Type: multipart/form-data
+本项目不使用固定长度粗暴切分，采用以下语义分块策略：
 
-file: <PDF文件>
-source_type: textbook
-department: 心血管内科
-permission_level: 0
-```
+1. **章节优先**：按文档标题层级（第X章、1.1、一、）切分
+2. **表格独立**：表格完整保留为独立块，不拆分
+3. **段落合并**：短段落贪心合并至接近 max_chunk_size
+4. **句子边界**：超长段落在句号/问号/分号处切分
+5. **摘要增强**：每个块附带摘要，以 `[摘要]...[正文]...` 格式存入向量库
 
-### 健康检查
+## Windows 开发注意事项
 
-```http
-GET /api/v1/health/
-```
+1. **WSL 挂载 E 盘性能**：WSL 挂载 `/mnt/e/` 性能较差，建议在 Windows 原生 Python 环境运行
+2. **Docker Desktop**：确保 Docker Desktop 已启动，且配置了足够的内存（建议 8GB+）
+3. **路径分隔符**：代码中使用 `pathlib.Path` 处理路径，自动兼容 Windows/Linux
 
-### 评估
+## 配置说明
 
-```http
-POST /api/v1/evaluation/evaluate
-Content-Type: application/json
+所有配置通过 `.env` 文件管理，禁止硬编码密钥与参数：
 
-{
-    "query": "高血压的症状",
-    "ground_truth": "头痛、头晕、心悸..."
-}
-```
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `LLM_API_KEY` | Qwen API Key | 必填 |
+| `LLM_API_BASE` | LLM API 地址 | - |
+| `LLM_MODEL_NAME` | 模型名称 | qwen-plus |
+| `NEO4J_PASSWORD` | Neo4j 密码 | 必填 |
+| `MILVUS_PASSWORD` | Milvus 密码 | 必填 |
+| `DOCRAG_TOP_K` | 向量召回数量 | 5 |
+| `DOCRAG_MIN_SCORE` | 最低相似度阈值 | 0.3 |
+| `DOCRAG_CHUNK_SIZE` | 分块最大字符数 | 512 |
+| `CHANNEL_DOC_RAG_ENABLED` | 启用向量检索通道 | true |
+| `CHANNEL_GRAPH_RAG_ENABLED` | 启用图谱检索通道 | true |
 
-## 评估体系
+## 免责声明
 
-### TruLens RAG 三元指标
+**本系统所有回答仅供学习参考，不能替代执业医师诊断。**
 
-| 指标 | 说明 |
-|------|------|
-| Context Relevance | 检索到的上下文与用户问题的相关性 |
-| Groundedness | 生成的答案是否基于检索到的上下文 |
-| Answer Relevance | 生成的答案与用户问题的相关性 |
-
-### 采样率配置
-
-- 开发阶段：`TRULENS_SAMPLE_RATE=1.0`（100%）
-- 线上环境：`TRULENS_SAMPLE_RATE=0.0001`（0.01%）
-
-### 通道对比实验
-
-```http
-POST /api/v1/evaluation/compare?query=高血压的症状
-```
-
-## 验证清单
-
-运行验证脚本检查系统完整性：
-
-```powershell
-python scripts/verify.py
-```
-
-检查项目：
-1. ✓ Python 文件语法检查
-2. ✓ Neo4j Schema 属性名一致性
-3. ✓ Milvus Embedding 维度一致性
-4. ✓ 环境变量/配置检查
-5. ✓ JSON 解析容错测试
-6. ✓ 数据库连通性检查
-
-## 开发规范落实清单
-
-| 规则 | 描述 | 落实位置 |
-|------|------|---------|
-| 1 | Neo4j 属性名全局强一致 | `core/neo4j_schema.py` + 启动校验 |
-| 2 | Neo4j 禁止 fetch(-1) | `services/db/neo4j_pool.py` |
-| 3 | Milvus DataType 枚举 + 维度一致 | `core/milvus_schema.py` |
-| 4 | 数据库健康检查 + 自动重连 | 各 `*_pool.py` |
-| 5 | 关系属性完整性断言 | `scripts/init_neo4j.py` |
-| 6 | safe_json_parse 统一解析 | `core/safe_json.py` |
-| 7 | LLM 结构化输出容错 | `core/safe_json.py` |
-| 8 | 空结果降级逻辑 | `fusion/fusion_engine.py` |
-| 9 | min_score 阈值按集合调优 | `config/settings.py` |
-| 10 | Embedding 本地优先 | `core/embedding.py` |
-| 13 | .env 只读一次 | `config/settings.py` |
-| 14 | PowerShell 兼容 | README 命令 |
-| 15 | NL2Cypher 重试 + Schema 注入 | `rag/graphrag/channel.py` |
-| 16 | TruLens 从第一天埋观测点 | `evaluation/trulens_eval.py` |
-| 17 | 验证清单脚本 | `scripts/verify.py` |
-| 18 | 单例连接池 lifespan 初始化 | `main.py` lifespan |
-| 19 | 禁止静默失效 | 全项目 |
-
-## Shell 兼容性说明
-
-本项目所有命令均兼容 **Windows PowerShell** 语法：
-- 使用 `;` 而非 `&&` 连接命令
-- 使用 `Copy-Item` 而非 `cp`
-- 虚拟环境激活使用 `.\venv\Scripts\Activate`
-
-## License
-
-MIT
+系统禁止输出可直接用于临床诊断的结论，所有回答强制标注免责声明。
